@@ -1,0 +1,31 @@
+# OpenIDC State-of-Health alert rules. In production these would page the on-call
+# operator (the ITIL incident-management entry point).
+groups:
+  - name: openidc-soh
+    rules:
+      - alert: ResultsDatabaseDown
+        expr: openidc_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Results database unreachable"
+          description: "The dashboard cannot reach Postgres; the pipeline cannot persist detections."
+
+      - alert: NoRecentDetections
+        expr: openidc_arrivals_rate_1m == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No detections in the last 5 minutes"
+          description: "Station processing has produced no arrivals for 5 minutes — check ingestion and the broker."
+
+      - alert: PossibleExplosionDetected
+        expr: increase(openidc_events_screened{etype="ex"}[10m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Event screened as explosion-like"
+          description: "An event was classified as explosion-like in the last 10 minutes; analyst review required."

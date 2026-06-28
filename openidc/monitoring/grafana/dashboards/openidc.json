@@ -1,0 +1,86 @@
+{
+  "uid": "openidc-soh",
+  "title": "OpenIDC — State of Health",
+  "tags": ["openidc"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "annotations": { "list": [] },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Database",
+      "datasource": { "type": "prometheus", "uid": "openidc-prom" },
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "openidc_up", "datasource": { "type": "prometheus", "uid": "openidc-prom" } }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "none", "textMode": "auto" },
+      "fieldConfig": { "defaults": { "mappings": [ { "type": "value", "options": { "0": { "text": "DOWN" }, "1": { "text": "UP" } } } ], "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } }, "overrides": [] }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Total detections",
+      "datasource": { "type": "prometheus", "uid": "openidc-prom" },
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "openidc_arrivals_total", "datasource": { "type": "prometheus", "uid": "openidc-prom" } }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area", "textMode": "auto" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] } }, "overrides": [] }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Total events",
+      "datasource": { "type": "prometheus", "uid": "openidc-prom" },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "openidc_events_total", "datasource": { "type": "prometheus", "uid": "openidc-prom" } }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "area", "textMode": "auto" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "purple", "value": null } ] } }, "overrides": [] }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Detection rate (last 60s)",
+      "datasource": { "type": "prometheus", "uid": "openidc-prom" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        { "refId": "A", "expr": "openidc_arrivals_rate_1m", "legendFormat": "detections/min", "datasource": { "type": "prometheus", "uid": "openidc-prom" } }
+      ],
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 20 } }, "overrides": [] }
+    },
+    {
+      "id": 5,
+      "type": "bargauge",
+      "title": "Detections per station",
+      "datasource": { "type": "prometheus", "uid": "openidc-prom" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        { "refId": "A", "expr": "openidc_arrivals_per_station", "legendFormat": "{{sta}}", "datasource": { "type": "prometheus", "uid": "openidc-prom" } }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "orientation": "horizontal", "displayMode": "gradient", "showUnfilled": true },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] } }, "overrides": [] }
+    },
+    {
+      "id": 6,
+      "type": "piechart",
+      "title": "Event screening (earthquake vs explosion-like)",
+      "datasource": { "type": "prometheus", "uid": "openidc-prom" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [
+        { "refId": "A", "expr": "openidc_events_screened", "legendFormat": "{{etype}}", "datasource": { "type": "prometheus", "uid": "openidc-prom" } }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "pieType": "pie", "legend": { "displayMode": "list", "placement": "right" } },
+      "fieldConfig": { "defaults": {}, "overrides": [] }
+    }
+  ]
+}

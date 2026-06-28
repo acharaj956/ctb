@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OpenIDC — live pipeline</title>
+<style>
+  :root { --bg:#0e1116; --panel:#171c24; --line:#2a323d; --txt:#e6edf3; --muted:#8b97a7; --accent:#4da3ff; --hot:#ff6b5e; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background:var(--bg); color:var(--txt); }
+  header { padding:16px 24px; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:14px; }
+  header h1 { font-size:18px; margin:0; }
+  header .sub { color:var(--muted); font-size:13px; }
+  .wrap { display:grid; grid-template-columns: 320px 1fr; gap:16px; padding:16px 24px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  .panel h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0 0 12px; }
+  label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+  select, input[type=range] { width:100%; }
+  .val { float:right; color:var(--accent); }
+  button { width:100%; margin-top:12px; padding:10px; border:0; border-radius:8px; background:var(--accent); color:#04101f; font-weight:700; cursor:pointer; font-family:inherit; }
+  button.ghost { background:transparent; color:var(--muted); border:1px solid var(--line); font-weight:400; }
+  .stats { display:flex; gap:24px; margin-bottom:16px; }
+  .stat .n { font-size:30px; font-weight:700; }
+  .stat .l { font-size:12px; color:var(--muted); }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:400; }
+  tr.fresh { animation: flash 1.2s ease-out; }
+  @keyframes flash { from { background:rgba(77,163,255,.25); } to { background:transparent; } }
+  .pill { display:inline-block; padding:1px 8px; border-radius:99px; background:#21384f; color:var(--accent); font-size:11px; }
+  #status { color:var(--muted); font-size:12px; margin-top:8px; min-height:16px; }
+  .chips span { display:inline-block; background:#0c1218; border:1px solid var(--line); border-radius:6px; padding:3px 8px; margin:2px 4px 0 0; font-size:12px; color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>OpenIDC</h1>
+  <span class="sub">live mirror of the IDC automatic processing pipeline · ingestion → Kafka → STA/LTA (C) → Postgres (CSS 3.0)</span>
+</header>
+
+<div class="wrap">
+  <!-- LEFT: controls -->
+  <div>
+    <div class="panel">
+      <h2>Inject a signal</h2>
+      <label>Station</label>
+      <select id="sta"></select>
+      <label>Amplitude <span class="val" id="ampv">18</span></label>
+      <input type="range" id="amp" min="2" max="40" value="18" />
+      <label>Frequency (Hz) <span class="val" id="freqv">4.0</span></label>
+      <input type="range" id="freq" min="1" max="10" step="0.5" value="4" />
+      <button onclick="inject(false)">Inject event ⚡</button>
+      <button class="ghost" onclick="inject(true)">Inject noise-only frame</button>
+    </div>
+
+    <div class="panel" style="margin-top:16px;">
+      <h2>Detector thresholds (live)</h2>
+      <label>Trigger ON <span class="val" id="onv">4.0</span></label>
+      <input type="range" id="on" min="2" max="10" step="0.5" value="4" />
+      <label>Trigger OFF <span class="val" id="offv">1.5</span></label>
+      <input type="range" id="off" min="1" max="5" step="0.5" value="1.5" />
+      <button onclick="applyThreshold()">Apply to pipeline →</button>
+      <div id="status"></div>
+    </div>
+
+    <div class="panel" style="margin-top:16px;">
+      <h2>Network processing · via RabbitMQ</h2>
+      <label>Min. stations to declare an event <span class="val" id="minv">2</span></label>
+      <input type="range" id="min" min="2" max="4" step="1" value="2" />
+      <button onclick="setMinStations()">Send to associator →</button>
+      <label style="margin-top:14px;">Configure a new station</label>
+      <input id="ns" placeholder="code e.g. NEWS" style="width:100%;margin-bottom:6px;padding:6px;background:#0c1218;border:1px solid var(--line);color:var(--txt);border-radius:6px;" />
+      <div style="display:flex;gap:6px;">
+        <input id="nlat" placeholder="lat" style="width:50%;padding:6px;background:#0c1218;border:1px solid var(--line);color:var(--txt);border-radius:6px;" />
+        <input id="nlon" placeholder="lon" style="width:50%;padding:6px;background:#0c1218;border:1px solid var(--line);color:var(--txt);border-radius:6px;" />
+      </div>
+      <button class="ghost" onclick="addStation()">Add station →</button>
+      <div id="nstatus" style="color:var(--muted);font-size:12px;margin-top:8px;min-height:16px;"></div>
+    </div>
+  </div>
+
+  <!-- RIGHT: live state -->
+  <div>
+    <div class="panel">
+      <div class="stats">
+        <div class="stat"><div class="n" id="total">0</div><div class="l">total detections</div></div>
+        <div class="stat"><div class="n" id="rate">0</div><div class="l">last 60 s</div></div>
+        <div class="stat"><div class="n" id="thr">4.0</div><div class="l">current ON threshold</div></div>
+      </div>
+      <div class="chips" id="perstation"></div>
+    </div>
+
+    <div class="panel" style="margin-top:16px;">
+      <h2>Recent detections (arrivals)</h2>
+      <table>
+        <thead><tr><th>arid</th><th>sta</th><th>chan</th><th>phase</th><th>SNR</th><th>onset (UTC)</th><th>auth</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+
+    <div class="panel" style="margin-top:16px;">
+      <h2>Events &amp; screening (network processing)</h2>
+      <table>
+        <thead><tr><th>orid</th><th>origin (UTC)</th><th>lat</th><th>lon</th><th>depth</th><th>mb</th><th>nass</th><th>screening</th></tr></thead>
+        <tbody id="events"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let seen = new Set();
+
+// Escape any value before it is placed into innerHTML, to prevent XSS from
+// data that originates outside this page (DB rows, station codes, API fields).
+const esc = v => String(v).replace(/[&<>"']/g, c =>
+  ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+
+// wire up slider labels
+for (const [s, v] of [["amp","ampv"],["freq","freqv"],["on","onv"],["off","offv"],["min","minv"]]) {
+  $(s).addEventListener("input", () => $(v).textContent = $(s).value);
+}
+
+async function loadConfig() {
+  const c = await (await fetch("/api/config")).json();
+  $("sta").innerHTML = c.stations.map(s => `<option>${esc(s)}</option>`).join("");
+  $("on").value = c.thresholds.on; $("onv").textContent = c.thresholds.on;
+  $("off").value = c.thresholds.off; $("offv").textContent = c.thresholds.off;
+  $("min").value = c.network.min_stations; $("minv").textContent = c.network.min_stations;
+}
+
+async function inject(quiet) {
+  const body = { sta: $("sta").value, amp: +$("amp").value, freq: +$("freq").value, quiet };
+  await fetch("/api/inject", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+  setStatus(quiet ? `Injected noise-only frame for ${body.sta} (should NOT trigger)` : `Injected event for ${body.sta} — watch the table…`);
+  setTimeout(refresh, 800);
+}
+
+async function applyThreshold() {
+  const body = { on: +$("on").value, off: +$("off").value };
+  await fetch("/api/threshold", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+  setStatus(`Sent control message: trigger ON=${body.on}, OFF=${body.off} → pipeline updated live`);
+}
+
+function setStatus(msg) { $("status").textContent = msg; }
+
+async function setMinStations() {
+  const v = +$("min").value;
+  const r = await (await fetch("/api/command", { method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ cmd:"set_min_stations", value:v }) })).json();
+  $("nstatus").textContent = r.ok ? `Sent over RabbitMQ: min stations = ${v}` : `Error: ${r.error}`;
+}
+
+async function addStation() {
+  const sta = $("ns").value.trim(), lat = parseFloat($("nlat").value), lon = parseFloat($("nlon").value);
+  if (!sta || isNaN(lat) || isNaN(lon)) { $("nstatus").textContent = "Enter code, lat and lon"; return; }
+  const r = await (await fetch("/api/command", { method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ cmd:"add_station", sta, lat, lon }) })).json();
+  $("nstatus").textContent = r.ok ? `Configured new station ${sta} (${lat}, ${lon})` : `Error: ${r.error}`;
+}
+
+async function refreshEvents() {
+  try {
+    const e = await (await fetch("/api/events?limit=15")).json();
+    $("events").innerHTML = e.rows.map(r => {
+      const ex = r.etype === "ex";
+      const color = ex ? "var(--hot)" : "#5ad17e";
+      const label = ex ? "EXPLOSION-LIKE" : "earthquake";
+      return `<tr><td>${esc(r.orid)}</td><td>${esc(r.origin_time)}</td><td>${esc(r.lat)}</td><td>${esc(r.lon)}</td>`
+           + `<td>${esc(r.depth)}</td><td>${esc(r.mb)}</td><td>${esc(r.nass)}</td>`
+           + `<td style="color:${color};font-weight:700">${label}</td></tr>`;
+    }).join("");
+  } catch (e) { /* transient during startup */ }
+}
+
+async function refresh() {
+  try {
+    const [a, s] = await Promise.all([
+      (await fetch("/api/arrivals?limit=20")).json(),
+      (await fetch("/api/stats")).json(),
+    ]);
+    $("total").textContent = s.total;
+    $("rate").textContent = s.rate_1m;
+    $("thr").textContent = s.thresholds.on;
+    $("perstation").innerHTML = s.per_station.map(p => `<span>${esc(p.sta)}: <b style="color:#e6edf3">${esc(p.count)}</b></span>`).join("");
+    $("rows").innerHTML = a.rows.map(r => {
+      const fresh = !seen.has(r.arid);
+      return `<tr class="${fresh ? "fresh" : ""}"><td>${esc(r.arid)}</td><td>${esc(r.sta)}</td><td>${esc(r.chan)}</td>`
+           + `<td><span class="pill">${esc(r.iphase)}</span></td><td>${esc(r.snr)}</td><td>${esc(r.onset)}</td><td>${esc(r.auth)}</td></tr>`;
+    }).join("");
+    a.rows.forEach(r => seen.add(r.arid));
+  } catch (e) { /* transient during startup */ }
+}
+
+loadConfig();
+refresh();
+refreshEvents();
+setInterval(refresh, 2000);
+setInterval(refreshEvents, 2000);
+</script>
+</body>
+</html>

@@ -1,0 +1,154 @@
+# OpenIDC application-tier Deployments. The stateful infrastructure (Kafka,
+# Postgres, RabbitMQ) is provided by operators/charts — see k8s/README.md — and
+# is intentionally not hand-rolled here.
+#
+# All pods run as a non-root user with privilege escalation disabled and all
+# Linux capabilities dropped, consistent with docs/SECURITY.md.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingestion
+  namespace: openidc
+  labels: { app: ingestion, tier: app }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: ingestion }
+  template:
+    metadata:
+      labels: { app: ingestion, tier: app }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: ingestion
+          image: openidc/ingestion:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef: { name: openidc-config }
+            - secretRef: { name: openidc-secrets }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: "50m", memory: "128Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: station-processing
+  namespace: openidc
+  labels: { app: station-processing, tier: app }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: station-processing }
+  template:
+    metadata:
+      labels: { app: station-processing, tier: app }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: station-processing
+          image: openidc/station-processing:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef: { name: openidc-config }
+            - secretRef: { name: openidc-secrets }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { cpu: "1", memory: "512Mi" }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: network-processing
+  namespace: openidc
+  labels: { app: network-processing, tier: app }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: network-processing }
+  template:
+    metadata:
+      labels: { app: network-processing, tier: app }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: network-processing
+          image: openidc/network-processing:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef: { name: openidc-config }
+            - secretRef: { name: openidc-secrets }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { cpu: "1", memory: "768Mi" }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard
+  namespace: openidc
+  labels: { app: dashboard, tier: app }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: dashboard }
+  template:
+    metadata:
+      labels: { app: dashboard, tier: app }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: dashboard
+          image: openidc/dashboard:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef: { name: openidc-config }
+            - secretRef: { name: openidc-secrets }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          readinessProbe:
+            httpGet: { path: /api/config, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "50m", memory: "128Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard
+  namespace: openidc
+  labels: { app: dashboard }
+spec:
+  type: ClusterIP
+  selector:
+    app: dashboard
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000

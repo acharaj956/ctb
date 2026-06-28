@@ -1,0 +1,4 @@
+kafka-python==2.0.2
+numpy==1.26.4
+cryptography==42.0.8
+# For FDSN_MODE=true (real waveform data) also install:  obspy==1.4.1

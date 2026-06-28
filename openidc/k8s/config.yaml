@@ -1,0 +1,47 @@
+# Shared, non-secret configuration for the OpenIDC application tier.
+# Service names (kafka, postgres, rabbitmq) are the in-cluster DNS names that the
+# infrastructure operators / charts are expected to expose (see README).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openidc-config
+  namespace: openidc
+data:
+  KAFKA_BOOTSTRAP: "kafka:9092"
+  RAW_TOPIC: "raw.waveforms"
+  DET_TOPIC: "detections"
+  CONTROL_TOPIC: "control"
+  RABBITMQ_HOST: "rabbitmq"
+  PGHOST: "postgres"
+  PGPORT: "5432"
+  PGDATABASE: "openidc"
+  STATIONS: "ARCES,FINES,GERES,WRA"
+  SAMPLE_RATE: "40"
+  FRAME_SECONDS: "10"
+  EVENT_PROBABILITY: "0.25"
+  SIGN_FRAMES: "true"
+  # In Kubernetes the producer's public key is distributed as a Secret mounted
+  # into station-processing (not a shared volume); see README before enabling.
+  VERIFY_FRAMES: "false"
+  FDSN_MODE: "false"
+  STA_SECONDS: "1.0"
+  LTA_SECONDS: "8.0"
+  TRIGGER_ON: "4.0"
+  TRIGGER_OFF: "1.5"
+  MIN_STATIONS: "2"
+  WINDOW_SECONDS: "20"
+  GRACE_SECONDS: "10"
+  SCREEN_MB: "4.8"
+  SCREEN_DEPTH: "40"
+---
+# Demo credentials only. In production these come from a secrets manager
+# (e.g. External Secrets / Vault / sealed-secrets), never from source control.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: openidc-secrets
+  namespace: openidc
+type: Opaque
+stringData:
+  PGUSER: "idc"
+  PGPASSWORD: "idc"

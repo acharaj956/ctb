@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Documents / non-source
+*.pdf
+openidc/docs/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# temporary git relocation
+**/.git.disabled/

@@ -1,0 +1,214 @@
+# OpenIDC — mini IDC automatic processing pipeline.
+# Kafka (single-node KRaft, no Zookeeper) + Postgres + two Python services.
+services:
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: openidc-kafka
+    ports:
+      - "127.0.0.1:9092:9092"  # host access (e.g. local kafka tooling)
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,INTERNAL://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,INTERNAL://kafka:29092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+
+  postgres:
+    image: postgres:16
+    container_name: openidc-postgres
+    environment:
+      POSTGRES_USER: idc
+      POSTGRES_PASSWORD: idc
+      POSTGRES_DB: openidc
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U idc -d openidc"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  ingestion:
+    build:
+      context: .
+      dockerfile: services/ingestion/Dockerfile
+    container_name: openidc-ingestion
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP: kafka:29092
+      RAW_TOPIC: raw.waveforms
+      STATIONS: "ARCES,FINES,GERES,WRA"   # mock IMS station codes
+      SAMPLE_RATE: "40"                    # Hz
+      FRAME_SECONDS: "10"
+      EVENT_PROBABILITY: "0.25"            # chance an event is injected per frame
+      SIGN_FRAMES: "true"
+      FDSN_MODE: "false"
+    volumes:
+      - pki:/pki                           # shared PKI material (producer writes pub key)
+
+  station-processing:
+    build:
+      context: .
+      dockerfile: services/station-processing/Dockerfile
+    container_name: openidc-station-processing
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP: kafka:29092
+      RAW_TOPIC: raw.waveforms
+      DET_TOPIC: detections
+      CONTROL_TOPIC: control            # live detector-threshold updates from the dashboard
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: idc
+      PGPASSWORD: idc
+      PGDATABASE: openidc
+      STA_SECONDS: "1.0"                   # short-term average window
+      LTA_SECONDS: "8.0"                   # long-term average window
+      TRIGGER_ON: "4.0"                    # STA/LTA ratio to declare a detection
+      TRIGGER_OFF: "1.5"
+      VERIFY_FRAMES: "true"
+    volumes:
+      - pki:/pki                           # reads producer public key to verify frames
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: services/dashboard/Dockerfile
+    container_name: openidc-dashboard
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"              # http://localhost:8000
+    environment:
+      KAFKA_BOOTSTRAP: kafka:29092
+      RAW_TOPIC: raw.waveforms
+      CONTROL_TOPIC: control
+      STATIONS: "ARCES,FINES,GERES,WRA"
+      SAMPLE_RATE: "40"
+      FRAME_SECONDS: "10"
+      SIGN_FRAMES: "true"
+      TRIGGER_ON: "4.0"
+      TRIGGER_OFF: "1.5"
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: idc
+      PGPASSWORD: idc
+      PGDATABASE: openidc
+      RABBITMQ_HOST: rabbitmq
+    volumes:
+      - pki:/pki                           # signs injected frames with the shared key
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: openidc-rabbitmq
+    ports:
+      - "127.0.0.1:5672:5672"              # AMQP
+      - "127.0.0.1:15672:15672"            # management UI (guest/guest)
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+
+  network-processing:
+    build:
+      context: .
+      dockerfile: services/network-processing/Dockerfile
+    container_name: openidc-network-processing
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP: kafka:29092
+      DET_TOPIC: detections
+      RABBITMQ_HOST: rabbitmq
+      MIN_STATIONS: "2"                     # min distinct stations to declare an event
+      WINDOW_SECONDS: "20"                  # association time window
+      GRACE_SECONDS: "10"                   # wait for late detections before closing a window
+      SCREEN_MB: "4.8"                      # shallow events above this mb screen as explosion-like
+      SCREEN_DEPTH: "40"                    # events deeper than this (km) are certainly natural
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: idc
+      PGPASSWORD: idc
+      PGDATABASE: openidc
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: openidc-prometheus
+    depends_on:
+      - dashboard
+    ports:
+      - "127.0.0.1:9090:9090"              # Prometheus UI
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: openidc-grafana
+    depends_on:
+      - prometheus
+    ports:
+      - "127.0.0.1:3000:3000"              # Grafana UI (anonymous viewer enabled)
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
+  # CSS flat-file conversion tool (Perl). Not started by default; run on demand:
+  #   docker compose run --rm perl-tools   (or: make css-export)
+  perl-tools:
+    build:
+      context: .
+      dockerfile: tools/Dockerfile
+    image: openidc/perl-tools
+    profiles: ["tools"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: idc
+      PGPASSWORD: idc
+      PGDATABASE: openidc
+
+volumes:
+  pgdata:
+  pki:
+  grafana-data:
